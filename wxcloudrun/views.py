@@ -222,6 +222,29 @@ def db_test():
     return make_succ_response(info)
 
 
+@app.route('/api/admin/readings', methods=['GET'])
+def admin_readings():
+    """
+    管理接口：查看所有塔罗解读记录（上线后应删除或加权限）
+    """
+    try:
+        readings = TarotReading.query.order_by(TarotReading.created_at.desc()).limit(50).all()
+        records = []
+        for r in readings:
+            records.append({
+                'id': r.id,
+                'openid': r.openid,
+                'question': r.question,
+                'cards': r.cards,
+                'spread': r.spread,
+                'result': r.result[:100] + '...' if r.result and len(r.result) > 100 else r.result,
+                'created_at': r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
+            })
+        return make_succ_response({'total': len(records), 'records': records})
+    except Exception as e:
+        return make_err_response('查询失败: {}'.format(str(e)))
+
+
 @app.before_first_request
 def init_db():
     """
