@@ -17,3 +17,6 @@ build/
 # 环境
 .env
 venv/
+
+# 个人记录
+record.md
