@@ -177,6 +177,28 @@ def tarot_history():
     })
 
 
+@app.route('/api/dbtest', methods=['GET'])
+def db_test():
+    """
+    调试接口：测试数据库连接状态（上线后可删除）
+    """
+    import config
+    info = {
+        'mysql_address': config.db_address,
+        'mysql_username': config.username,
+        'password_length': len(config.password) if config.password else 0,
+        'password_set': bool(config.password),
+    }
+    try:
+        result = db.session.execute('SELECT 1').fetchone()
+        info['db_connection'] = '成功'
+        info['db_result'] = str(result[0])
+    except Exception as e:
+        info['db_connection'] = '失败'
+        info['db_error'] = str(e)
+    return make_succ_response(info)
+
+
 @app.before_first_request
 def init_db():
     """
