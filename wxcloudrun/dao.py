@@ -70,16 +70,50 @@ def insert_tarot_reading(reading):
     """
     插入一条塔罗牌解读记录
     :param reading: TarotReading 实体
-    :return: 插入成功返回 True，失败返回 False
+    :return: 插入成功返回记录ID，失败返回 None
     """
     try:
         db.session.add(reading)
         db.session.commit()
-        return True
+        return reading.id
     except Exception as e:
         db.session.rollback()
         logger.error("insert_tarot_reading errorMsg= {} ".format(e))
+        return None
+
+
+def update_tarot_reading(reading_id, status, result=None):
+    """
+    更新塔罗牌解读记录的状态和结果
+    :param reading_id: 记录ID
+    :param status: 新状态
+    :param result: 解读结果（可选）
+    """
+    try:
+        reading = TarotReading.query.get(reading_id)
+        if reading is None:
+            logger.error("update_tarot_reading: 记录不存在, id={}".format(reading_id))
+            return False
+        reading.status = status
+        if result is not None:
+            reading.result = result
+        db.session.commit()
+        return True
+    except Exception as e:
+        db.session.rollback()
+        logger.error("update_tarot_reading errorMsg= {} ".format(e))
         return False
+
+
+def query_tarot_reading_by_id(reading_id):
+    """
+    根据ID查询塔罗牌解读记录
+    """
+    try:
+        return TarotReading.query.get(reading_id)
+    except Exception as e:
+        logger.error("query_tarot_reading_by_id errorMsg= {} ".format(e))
+        return None
 
 
 def query_readings_by_openid(openid, page=1, page_size=10):

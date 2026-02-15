@@ -1,12 +1,13 @@
 import json
 import logging
+import threading
 from datetime import datetime
 
 from flask import render_template, request
 from run import app
 from wxcloudrun import db
 from wxcloudrun.dao import delete_counterbyid, query_counterbyid, insert_counter, update_counterbyid, \
-    insert_tarot_reading, query_readings_by_openid
+    insert_tarot_reading, query_readings_by_openid, update_tarot_reading, query_tarot_reading_by_id
 from wxcloudrun.model import Counters, TarotReading
 from wxcloudrun.response import make_succ_empty_response, make_succ_response, make_err_response, \
     make_tarot_succ_response, make_tarot_err_response
@@ -75,24 +76,51 @@ def get_count():
     return make_succ_response(0) if counter is None else make_succ_response(counter.count)
 
 
+def _process_tarot_reading(app_context, reading_id, question, cards, spread):
+    """
+    后台线程：调用 DeepSeek 解读并将结果存入数据库
+    """
+    with app_context:
+        try:
+            # 更新状态为处理中
+            update_tarot_reading(reading_id, 'processing')
+
+            # 调用 DeepSeek
+            success, msg, result = call_deepseek(question, cards, spread)
+
+            if success:
+                update_tarot_reading(reading_id, 'completed', result)
+                logger.info("塔罗解读完成, id={}, 结果长度={}".format(reading_id, len(result)))
+            else:
+                update_tarot_reading(reading_id, 'failed', msg)
+                logger.error("塔罗解读失败, id={}, msg={}".format(reading_id, msg))
+        except Exception as e:
+            logger.error("塔罗解读异常, id={}, error={}".format(reading_id, str(e)))
+            try:
+                update_tarot_reading(reading_id, 'failed', '解读过程发生异常')
+            except Exception:
+                pass
+
+
 @app.route('/api/tarot', methods=['POST'])
 def tarot_reading():
     """
-    塔罗牌解读接口
+    塔罗牌解读接口（异步模式）
     请求体:
     {
         "question": "我今年的事业发展如何？",
         "cards": ["愚者", "女祭司", "命运之轮"],
         "spread": "时间之流三牌阵"
     }
-    响应:
+    响应（立即返回）:
     {
-        "code": 0,    // 0成功, 1失败
-        "msg": "解读成功",
-        "result": "解读内容..."
+        "code": 0,
+        "msg": "已提交解读",
+        "reading_id": 123
     }
+    然后前端用 reading_id 轮询 /api/tarot/result?id=123 获取结果
     """
-    # 获取用户openid（微信云托管会自动在header中注入用户信息）
+    # 获取用户openid
     openid = request.headers.get('X-WX-OPENID', '')
     if not openid:
         return make_tarot_err_response('无法获取用户身份信息，请通过微信小程序调用')
@@ -114,35 +142,94 @@ def tarot_reading():
     if not spread:
         return make_tarot_err_response('缺少牌阵(spread)参数')
 
-    # 调用 DeepSeek 进行解读
-    success, msg, result = call_deepseek(question, cards, spread)
+    # 先创建一条 pending 状态的记录
+    reading = TarotReading()
+    reading.openid = openid
+    reading.question = question
+    reading.cards = json.dumps(cards, ensure_ascii=False)
+    reading.spread = spread
+    reading.status = 'pending'
+    reading.created_at = datetime.now()
 
-    if not success:
-        return make_tarot_err_response(msg)
+    reading_id = insert_tarot_reading(reading)
+    if not reading_id:
+        return make_tarot_err_response('创建解读任务失败')
 
-    # 将解读记录存入数据库
-    try:
-        reading = TarotReading()
-        reading.openid = openid
-        reading.question = question
-        reading.cards = json.dumps(cards, ensure_ascii=False)
-        reading.spread = spread
-        reading.result = result
-        reading.created_at = datetime.now()
+    # 启动后台线程处理 DeepSeek 调用
+    thread = threading.Thread(
+        target=_process_tarot_reading,
+        args=(app.app_context(), reading_id, question, cards, spread)
+    )
+    thread.daemon = True
+    thread.start()
 
-        if not insert_tarot_reading(reading):
-            logger.error("塔罗解读记录存储失败, openid={}".format(openid))
-            # 存储失败不影响返回结果给用户
-    except Exception as e:
-        logger.error("塔罗解读记录存储异常: {}".format(e))
+    # 立即返回任务ID，前端用这个ID轮询结果
+    data = json.dumps({
+        'code': 0,
+        'msg': '已提交解读，请稍候查询结果',
+        'reading_id': reading_id
+    }, ensure_ascii=False)
+    from flask import Response
+    return Response(data, mimetype='application/json')
 
-    return make_tarot_succ_response(msg, result)
+
+@app.route('/api/tarot/result', methods=['GET'])
+def tarot_result():
+    """
+    查询塔罗牌解读结果（轮询接口）
+    请求参数: ?id=123
+    响应:
+    {
+        "code": 0,
+        "status": "completed",  // pending / processing / completed / failed
+        "msg": "解读成功",
+        "result": "解读内容..."
+    }
+    """
+    reading_id = request.args.get('id', type=int)
+    if not reading_id:
+        return make_tarot_err_response('缺少id参数')
+
+    reading = query_tarot_reading_by_id(reading_id)
+    if not reading:
+        return make_tarot_err_response('解读记录不存在')
+
+    # 验证用户身份（只能查自己的记录）
+    openid = request.headers.get('X-WX-OPENID', '')
+    if openid and reading.openid != openid:
+        return make_tarot_err_response('无权查看此记录')
+
+    if reading.status == 'completed':
+        data = json.dumps({
+            'code': 0,
+            'status': 'completed',
+            'msg': '解读成功',
+            'result': reading.result
+        }, ensure_ascii=False)
+    elif reading.status == 'failed':
+        data = json.dumps({
+            'code': 1,
+            'status': 'failed',
+            'msg': reading.result or '解读失败',
+            'result': ''
+        }, ensure_ascii=False)
+    else:
+        # pending 或 processing
+        data = json.dumps({
+            'code': 0,
+            'status': reading.status,
+            'msg': '正在解读中，请稍候...',
+            'result': ''
+        }, ensure_ascii=False)
+
+    from flask import Response
+    return Response(data, mimetype='application/json')
 
 
 @app.route('/api/tarot/history', methods=['GET'])
 def tarot_history():
     """
-    获取用户的塔罗牌解读历史记录
+    获取用户的塔罗牌解读历史记录（只返回已完成的）
     请求参数(query string):
         page: 页码，默认1
         page_size: 每页条数，默认10
@@ -165,7 +252,8 @@ def tarot_history():
             'question': reading.question,
             'cards': json.loads(reading.cards),
             'spread': reading.spread,
-            'result': reading.result,
+            'status': reading.status,
+            'result': reading.result if reading.status == 'completed' else '',
             'created_at': reading.created_at.strftime('%Y-%m-%d %H:%M:%S') if reading.created_at else ''
         })
 
@@ -175,6 +263,30 @@ def tarot_history():
         'page': page,
         'page_size': page_size
     })
+
+
+@app.route('/api/admin/readings', methods=['GET'])
+def admin_readings():
+    """
+    管理接口：查看所有塔罗解读记录（上线后应删除或加权限）
+    """
+    try:
+        readings = TarotReading.query.order_by(TarotReading.created_at.desc()).limit(50).all()
+        records = []
+        for r in readings:
+            records.append({
+                'id': r.id,
+                'openid': r.openid,
+                'question': r.question,
+                'cards': r.cards,
+                'spread': r.spread,
+                'status': r.status,
+                'result': r.result[:100] + '...' if r.result and len(r.result) > 100 else r.result,
+                'created_at': r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
+            })
+        return make_succ_response({'total': len(records), 'records': records})
+    except Exception as e:
+        return make_err_response('查询失败: {}'.format(str(e)))
 
 
 @app.route('/api/dbtest', methods=['GET'])
@@ -204,6 +316,7 @@ def db_test():
         reading.question = '测试问题'
         reading.cards = '["测试牌"]'
         reading.spread = '测试牌阵'
+        reading.status = 'completed'
         reading.result = '这是一段测试解读内容，包含中文。'
         reading.created_at = datetime.now()
         insert_tarot_reading(reading)
@@ -212,7 +325,7 @@ def db_test():
         info['db_write'] = '失败'
         info['db_write_error'] = str(e)
 
-    # 查询刚写入的记录
+    # 查询记录数
     try:
         count = TarotReading.query.count()
         info['total_readings'] = count
@@ -220,29 +333,6 @@ def db_test():
         info['db_read_error'] = str(e)
 
     return make_succ_response(info)
-
-
-@app.route('/api/admin/readings', methods=['GET'])
-def admin_readings():
-    """
-    管理接口：查看所有塔罗解读记录（上线后应删除或加权限）
-    """
-    try:
-        readings = TarotReading.query.order_by(TarotReading.created_at.desc()).limit(50).all()
-        records = []
-        for r in readings:
-            records.append({
-                'id': r.id,
-                'openid': r.openid,
-                'question': r.question,
-                'cards': r.cards,
-                'spread': r.spread,
-                'result': r.result[:100] + '...' if r.result and len(r.result) > 100 else r.result,
-                'created_at': r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
-            })
-        return make_succ_response({'total': len(records), 'records': records})
-    except Exception as e:
-        return make_err_response('查询失败: {}'.format(str(e)))
 
 
 @app.before_first_request

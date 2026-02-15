@@ -25,5 +25,7 @@ class TarotReading(db.Model):
     question = db.Column(db.String(500), nullable=False, comment='用户提问')
     cards = db.Column(db.String(500), nullable=False, comment='抽到的牌，JSON数组字符串')
     spread = db.Column(db.String(100), nullable=False, comment='牌阵名称')
+    # status: pending=等待解读, processing=解读中, completed=解读完成, failed=解读失败
+    status = db.Column(db.String(20), nullable=False, default='pending', comment='任务状态')
     result = db.Column(db.Text, nullable=True, comment='大模型解读结果')
     created_at = db.Column(db.TIMESTAMP, nullable=False, default=datetime.now, comment='创建时间')
