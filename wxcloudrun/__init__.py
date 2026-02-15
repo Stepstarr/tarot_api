@@ -1,3 +1,4 @@
+import logging
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 import pymysql
@@ -6,6 +7,34 @@ import config
 
 # 因MySQLDB不支持Python3，使用pymysql扩展库代替MySQLDB库
 pymysql.install_as_MySQLdb()
+
+logger = logging.getLogger('log')
+
+# 启动时自动创建数据库（如果不存在）
+def _ensure_database_exists():
+    """确保 flask_demo 数据库存在，不存在则自动创建"""
+    if not config.db_address or not config.username:
+        logger.warning("数据库配置不完整，跳过自动创建数据库")
+        return
+    try:
+        host, port = config.db_address.split(':')
+        conn = pymysql.connect(
+            host=host,
+            port=int(port),
+            user=config.username,
+            password=config.password,
+            charset='utf8'
+        )
+        cursor = conn.cursor()
+        cursor.execute("CREATE DATABASE IF NOT EXISTS flask_demo DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci")
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info("数据库 flask_demo 已就绪")
+    except Exception as e:
+        logger.error("自动创建数据库失败: {}".format(e))
+
+_ensure_database_exists()
 
 # 初始化web应用
 app = Flask(__name__, instance_relative_config=True)
