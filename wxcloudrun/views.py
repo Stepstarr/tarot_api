@@ -180,22 +180,45 @@ def tarot_history():
 @app.route('/api/dbtest', methods=['GET'])
 def db_test():
     """
-    调试接口：测试数据库连接状态（上线后可删除）
+    调试接口：测试数据库连接 + 写入（上线后可删除）
     """
     import config
     info = {
         'mysql_address': config.db_address,
         'mysql_username': config.username,
-        'password_length': len(config.password) if config.password else 0,
         'password_set': bool(config.password),
     }
+    # 测试连接
     try:
         result = db.session.execute('SELECT 1').fetchone()
         info['db_connection'] = '成功'
-        info['db_result'] = str(result[0])
     except Exception as e:
         info['db_connection'] = '失败'
         info['db_error'] = str(e)
+        return make_succ_response(info)
+
+    # 测试写入tarot_readings
+    try:
+        reading = TarotReading()
+        reading.openid = 'test_dbtest'
+        reading.question = '测试问题'
+        reading.cards = '["测试牌"]'
+        reading.spread = '测试牌阵'
+        reading.result = '这是一段测试解读内容，包含中文。'
+        reading.created_at = datetime.now()
+        insert_tarot_reading(reading)
+        info['db_write'] = '成功'
+    except Exception as e:
+        info['db_write'] = '失败'
+        info['db_write_error'] = str(e)
+
+    # 查询刚写入的记录
+    try:
+        count = TarotReading.query.count()
+        info['total_readings'] = count
+    except Exception as e:
+        info['db_read_error'] = str(e)
+
     return make_succ_response(info)
 
 

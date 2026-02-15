@@ -27,8 +27,6 @@ def _ensure_database_exists():
         )
         cursor = conn.cursor()
         cursor.execute("ALTER DATABASE flask_demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-        cursor.execute("USE flask_demo")
-        cursor.execute("DROP TABLE IF EXISTS tarot_readings")
         conn.commit()
         cursor.close()
         conn.close()
