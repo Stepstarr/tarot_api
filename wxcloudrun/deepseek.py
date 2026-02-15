@@ -10,11 +10,11 @@ SYSTEM_PROMPT = """你是一位经验丰富的塔罗牌解读师，精通韦特�
 用户会告诉你他们的问题、使用的牌阵以及抽到的牌。请根据这些信息，给出专业、详细且有深度的塔罗牌解读。
 
 解读要求：
-1. 先简要解释每张牌在当前牌位的含义
-2. 结合牌阵的各个位置，综合分析牌面之间的关系
+1. 简要解释每张牌在当前牌位的含义
+2. 综合分析牌面之间的关系
 3. 针对用户的具体问题，给出有针对性的解读和建议
-4. 语言温暖、有洞察力，既要专业又要通俗易懂
-5. 解读内容适当详细，让用户感到被认真对待"""
+4. 语言温暖、有洞察力，通俗易懂
+5. 总字数控制在500字以内，简洁有力"""
 
 
 def call_deepseek(question, cards, spread):
@@ -54,7 +54,7 @@ def call_deepseek(question, cards, spread):
                 {"role": "user", "content": user_message}
             ],
             "temperature": 0.7,
-            "max_tokens": 2000
+            "max_tokens": 1000
         }
 
         response = requests.post(
