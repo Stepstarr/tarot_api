@@ -18,6 +18,7 @@ class Counters(db.Model):
 # 塔罗牌解读记录表
 class TarotReading(db.Model):
     __tablename__ = 'tarot_readings'
+    __table_args__ = {'mysql_charset': 'utf8mb4', 'mysql_collate': 'utf8mb4_unicode_ci'}
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     openid = db.Column(db.String(128), nullable=False, index=True, comment='用户微信openid')

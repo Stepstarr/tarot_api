@@ -23,10 +23,12 @@ def _ensure_database_exists():
             port=int(port),
             user=config.username,
             password=config.password,
-            charset='utf8'
+            charset='utf8mb4'
         )
         cursor = conn.cursor()
-        cursor.execute("CREATE DATABASE IF NOT EXISTS flask_demo DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci")
+        cursor.execute("ALTER DATABASE flask_demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+        cursor.execute("USE flask_demo")
+        cursor.execute("DROP TABLE IF EXISTS tarot_readings")
         conn.commit()
         cursor.close()
         conn.close()
@@ -41,7 +43,7 @@ app = Flask(__name__, instance_relative_config=True)
 app.config['DEBUG'] = config.DEBUG
 
 # 设定数据库链接（密码中可能含有特殊字符，需要URL编码）
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://{}:{}@{}/flask_demo'.format(
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://{}:{}@{}/flask_demo?charset=utf8mb4'.format(
     config.username,
     quote_plus(config.password),
     config.db_address
