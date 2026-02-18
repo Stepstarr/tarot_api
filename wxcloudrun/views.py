@@ -7,7 +7,8 @@ from flask import render_template, request
 from run import app
 from wxcloudrun import db
 from wxcloudrun.dao import delete_counterbyid, query_counterbyid, insert_counter, update_counterbyid, \
-    insert_tarot_reading, query_readings_by_openid, update_tarot_reading, query_tarot_reading_by_id
+    insert_tarot_reading, query_readings_by_openid, update_tarot_reading, query_tarot_reading_by_id, \
+    soft_delete_reading, soft_delete_all_readings
 from wxcloudrun.model import Counters, TarotReading
 from wxcloudrun.response import make_succ_empty_response, make_succ_response, make_err_response, \
     make_tarot_succ_response, make_tarot_err_response
@@ -108,8 +109,8 @@ def tarot_reading():
     塔罗牌解读接口（异步模式）
     请求体:
     {
-        "question": "我今年的事业发展如何？",
-        "cards": ["愚者", "女祭司", "命运之轮"],
+        "question": "我今年的学业发展如何啊？",
+        "cards": {"愚者": "正", "女祭司": "负", "命运之轮": "正"},
         "spread": "时间之流三牌阵"
     }
     响应（立即返回）:
@@ -131,14 +132,14 @@ def tarot_reading():
         return make_tarot_err_response('请求参数不能为空')
 
     question = params.get('question', '').strip()
-    cards = params.get('cards', [])
+    cards = params.get('cards', {})
     spread = params.get('spread', '').strip()
 
     # 参数校验
     if not question:
         return make_tarot_err_response('缺少问题(question)参数')
-    if not cards or not isinstance(cards, list) or len(cards) == 0:
-        return make_tarot_err_response('缺少牌面(cards)参数或格式不正确')
+    if not cards or not isinstance(cards, dict) or len(cards) == 0:
+        return make_tarot_err_response('缺少牌面(cards)参数或格式不正确，应为 {"牌名": "正/负"} 格式')
     if not spread:
         return make_tarot_err_response('缺少牌阵(spread)参数')
 
@@ -263,6 +264,47 @@ def tarot_history():
         'page': page,
         'page_size': page_size
     })
+
+
+@app.route('/api/tarot/history/delete', methods=['POST'])
+def tarot_history_delete():
+    """
+    删除单条塔罗牌解读历史记录（软删除，数据库保留）
+    请求体: { "id": 123 }
+    """
+    openid = request.headers.get('X-WX-OPENID', '')
+    if not openid:
+        return make_tarot_err_response('无法获取用户身份信息，请通过微信小程序调用')
+
+    params = request.get_json()
+    if not params:
+        return make_tarot_err_response('请求参数不能为空')
+
+    reading_id = params.get('id')
+    if not reading_id:
+        return make_tarot_err_response('缺少记录id参数')
+
+    success, msg = soft_delete_reading(reading_id, openid)
+    if success:
+        return make_succ_response({'msg': msg})
+    else:
+        return make_tarot_err_response(msg)
+
+
+@app.route('/api/tarot/history/delete_all', methods=['POST'])
+def tarot_history_delete_all():
+    """
+    删除用户所有塔罗牌解读历史记录（软删除，数据库保留）
+    """
+    openid = request.headers.get('X-WX-OPENID', '')
+    if not openid:
+        return make_tarot_err_response('无法获取用户身份信息，请通过微信小程序调用')
+
+    success, msg, count = soft_delete_all_readings(openid)
+    if success:
+        return make_succ_response({'msg': msg, 'deleted_count': count})
+    else:
+        return make_tarot_err_response(msg)
 
 
 @app.route('/api/admin/readings', methods=['GET'])

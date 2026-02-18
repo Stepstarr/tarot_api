@@ -26,7 +26,7 @@ def call_deepseek(question, cards, spread):
     """
     调用 DeepSeek API 进行塔罗牌解读
     :param question: 用户的问题
-    :param cards: 抽到的牌列表
+    :param cards: 抽到的牌字典，格式 {"牌名": "正/负"}
     :param spread: 牌阵名称
     :return: (success, message, result)
              success: bool, 是否成功
@@ -36,8 +36,8 @@ def call_deepseek(question, cards, spread):
     if not config.DEEPSEEK_API_KEY:
         return False, "DeepSeek API Key 未配置", ""
 
-    # 构造用户消息
-    cards_str = "、".join(cards)
+    # 构造用户消息，格式：xx牌x位
+    cards_str = "、".join(f"{name}牌{pos}位" for name, pos in cards.items())
     user_message = f"""我的问题是：{question}
 
 使用的牌阵：{spread}

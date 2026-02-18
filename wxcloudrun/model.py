@@ -28,4 +28,5 @@ class TarotReading(db.Model):
     # status: pending=等待解读, processing=解读中, completed=解读完成, failed=解读失败
     status = db.Column(db.String(20), nullable=False, default='pending', comment='任务状态')
     result = db.Column(db.Text, nullable=True, comment='大模型解读结果')
+    is_deleted = db.Column(db.Boolean, nullable=False, default=False, server_default='0', comment='是否已删除（软删除）')
     created_at = db.Column(db.TIMESTAMP, nullable=False, default=datetime.now, comment='创建时间')

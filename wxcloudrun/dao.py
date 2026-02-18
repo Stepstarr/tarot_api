@@ -118,7 +118,7 @@ def query_tarot_reading_by_id(reading_id):
 
 def query_readings_by_openid(openid, page=1, page_size=10):
     """
-    根据openid查询用户的塔罗牌解读历史记录
+    根据openid查询用户的塔罗牌解读历史记录（排除已软删除的）
     :param openid: 用户微信openid
     :param page: 页码
     :param page_size: 每页条数
@@ -126,10 +126,54 @@ def query_readings_by_openid(openid, page=1, page_size=10):
     """
     try:
         return TarotReading.query.filter(
-            TarotReading.openid == openid
+            TarotReading.openid == openid,
+            TarotReading.is_deleted == False
         ).order_by(
             TarotReading.created_at.desc()
         ).paginate(page=page, per_page=page_size, error_out=False)
     except Exception as e:
         logger.error("query_readings_by_openid errorMsg= {} ".format(e))
         return None
+
+
+def soft_delete_reading(reading_id, openid):
+    """
+    软删除单条塔罗牌解读记录
+    :param reading_id: 记录ID
+    :param openid: 用户openid（用于验证归属）
+    :return: (success, msg)
+    """
+    try:
+        reading = TarotReading.query.get(reading_id)
+        if reading is None:
+            return False, '记录不存在'
+        if reading.openid != openid:
+            return False, '无权操作此记录'
+        if reading.is_deleted:
+            return False, '记录已被删除'
+        reading.is_deleted = True
+        db.session.commit()
+        return True, '删除成功'
+    except Exception as e:
+        db.session.rollback()
+        logger.error("soft_delete_reading errorMsg= {} ".format(e))
+        return False, '删除失败'
+
+
+def soft_delete_all_readings(openid):
+    """
+    软删除用户的所有塔罗牌解读记录
+    :param openid: 用户openid
+    :return: (success, msg, count)
+    """
+    try:
+        count = TarotReading.query.filter(
+            TarotReading.openid == openid,
+            TarotReading.is_deleted == False
+        ).update({'is_deleted': True})
+        db.session.commit()
+        return True, '删除成功', count
+    except Exception as e:
+        db.session.rollback()
+        logger.error("soft_delete_all_readings errorMsg= {} ".format(e))
+        return False, '删除失败', 0
