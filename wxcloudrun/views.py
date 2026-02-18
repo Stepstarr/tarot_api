@@ -3,7 +3,7 @@ import logging
 import threading
 from datetime import datetime
 
-from flask import render_template, request
+from flask import render_template, request, Response
 from run import app
 from wxcloudrun import db
 from wxcloudrun.dao import insert_tarot_reading, query_readings_by_openid, update_tarot_reading, \
@@ -12,7 +12,7 @@ from wxcloudrun.dao import insert_tarot_reading, query_readings_by_openid, updat
 from wxcloudrun.model import TarotReading
 from wxcloudrun.response import make_succ_empty_response, make_succ_response, make_err_response, \
     make_tarot_succ_response, make_tarot_err_response
-from wxcloudrun.deepseek import call_deepseek
+from wxcloudrun.deepseek import call_deepseek, safe_parse_result
 
 logger = logging.getLogger('log')
 
@@ -53,19 +53,6 @@ def _process_tarot_reading(app_context, reading_id, question, cards, spread):
 def tarot_reading():
     """
     塔罗牌解读接口（异步模式）
-    请求体:
-    {
-        "question": "我今年的学业发展如何啊？",
-        "cards": {"愚者": "正", "女祭司": "负", "命运之轮": "正"},
-        "spread": "时间之流三牌阵"
-    }
-    响应（立即返回）:
-    {
-        "code": 0,
-        "msg": "已提交解读",
-        "reading_id": 123
-    }
-    然后前端用 reading_id 轮询 /api/tarot/result?id=123 获取结果
     """
     openid = request.headers.get('X-WX-OPENID', '')
     if not openid:
@@ -86,7 +73,6 @@ def tarot_reading():
     if not spread:
         return make_tarot_err_response('缺少牌阵(spread)参数')
 
-    # 自动注册/更新用户活跃时间
     get_or_create_user(openid)
 
     reading = TarotReading()
@@ -113,7 +99,6 @@ def tarot_reading():
         'msg': '已提交解读，请稍候查询结果',
         'reading_id': reading_id
     }, ensure_ascii=False)
-    from flask import Response
     return Response(data, mimetype='application/json')
 
 
@@ -121,7 +106,7 @@ def tarot_reading():
 def tarot_result():
     """
     查询塔罗牌解读结果（轮询接口）
-    请求参数: ?id=123
+    result 字段为 JSON 对象：{reading_content, 综合分析, 金句, 建议}
     """
     reading_id = request.args.get('id', type=int)
     if not reading_id:
@@ -136,28 +121,28 @@ def tarot_result():
         return make_tarot_err_response('无权查看此记录')
 
     if reading.status == 'completed':
+        result_obj = safe_parse_result(reading.result)
         data = json.dumps({
             'code': 0,
             'status': 'completed',
             'msg': '解读成功',
-            'result': reading.result
+            'result': result_obj
         }, ensure_ascii=False)
     elif reading.status == 'failed':
         data = json.dumps({
             'code': 1,
             'status': 'failed',
             'msg': reading.result or '解读失败',
-            'result': ''
+            'result': {}
         }, ensure_ascii=False)
     else:
         data = json.dumps({
             'code': 0,
             'status': reading.status,
             'msg': '正在解读中，请稍候...',
-            'result': ''
+            'result': {}
         }, ensure_ascii=False)
 
-    from flask import Response
     return Response(data, mimetype='application/json')
 
 
@@ -165,9 +150,6 @@ def tarot_result():
 def tarot_history():
     """
     获取用户的塔罗牌解读历史记录（只返回未被软删除的）
-    请求参数(query string):
-        page: 页码，默认1
-        page_size: 每页条数，默认10
     """
     openid = request.headers.get('X-WX-OPENID', '')
     if not openid:
@@ -182,13 +164,17 @@ def tarot_history():
 
     records = []
     for reading in pagination.items:
+        if reading.status == 'completed':
+            result_obj = safe_parse_result(reading.result)
+        else:
+            result_obj = {}
         records.append({
             'id': reading.id,
             'question': reading.question,
             'cards': json.loads(reading.cards),
             'spread': reading.spread,
             'status': reading.status,
-            'result': reading.result if reading.status == 'completed' else '',
+            'result': result_obj,
             'created_at': reading.created_at.strftime('%Y-%m-%d %H:%M:%S') if reading.created_at else ''
         })
 
@@ -204,7 +190,6 @@ def tarot_history():
 def tarot_history_delete():
     """
     删除单条塔罗牌解读历史记录（软删除，数据库保留）
-    请求体: { "id": 123 }
     """
     openid = request.headers.get('X-WX-OPENID', '')
     if not openid:
@@ -239,6 +224,64 @@ def tarot_history_delete_all():
         return make_succ_response({'msg': msg, 'deleted_count': count})
     else:
         return make_tarot_err_response(msg)
+
+
+# ============ 分享图片接口 ============
+
+@app.route('/api/tarot/share_image', methods=['POST'])
+def share_image():
+    """
+    生成分享图片
+    请求体: { "reading_id": 123, "hide_question": false }
+    响应: { "code": 0, "data": { "image_base64": "data:image/png;base64,..." } }
+    """
+    openid = request.headers.get('X-WX-OPENID', '')
+    if not openid:
+        return make_tarot_err_response('无法获取用户身份信息')
+
+    params = request.get_json()
+    if not params:
+        return make_tarot_err_response('请求参数不能为空')
+
+    reading_id = params.get('reading_id')
+    if not reading_id:
+        return make_tarot_err_response('缺少 reading_id 参数')
+
+    hide_question = params.get('hide_question', False)
+
+    reading = query_tarot_reading_by_id(reading_id)
+    if not reading:
+        return make_tarot_err_response('解读记录不存在')
+    if reading.openid != openid:
+        return make_tarot_err_response('无权操作此记录')
+    if reading.status != 'completed':
+        return make_tarot_err_response('解读尚未完成，无法生成分享图')
+
+    result_obj = safe_parse_result(reading.result)
+    golden_quote = result_obj.get('金句', '')
+    if not golden_quote:
+        golden_quote = '愿星辰指引你前行的方向。'
+
+    try:
+        cards = json.loads(reading.cards)
+    except (json.JSONDecodeError, TypeError):
+        cards = {}
+
+    try:
+        from wxcloudrun.share_image import generate_share_image
+        image_b64 = generate_share_image(
+            question=reading.question,
+            cards=cards,
+            spread=reading.spread,
+            golden_quote=golden_quote,
+            hide_question=hide_question
+        )
+        return make_succ_response({
+            'image_base64': f'data:image/png;base64,{image_b64}'
+        })
+    except Exception as e:
+        logger.error("生成分享图片失败: {}".format(str(e)))
+        return make_tarot_err_response('生成分享图片失败: {}'.format(str(e)))
 
 
 # ============ 用户相关接口 ============
@@ -278,7 +321,6 @@ def user_update():
     if not params:
         return make_tarot_err_response('请求参数不能为空')
 
-    # 先确保用户存在
     get_or_create_user(openid)
 
     nickname = params.get('nickname')
@@ -309,7 +351,7 @@ def admin_readings():
                 'cards': r.cards,
                 'spread': r.spread,
                 'status': r.status,
-                'result': r.result[:100] + '...' if r.result and len(r.result) > 100 else r.result,
+                'result': r.result[:200] + '...' if r.result and len(r.result) > 200 else r.result,
                 'created_at': r.created_at.strftime('%Y-%m-%d %H:%M:%S') if r.created_at else ''
             })
         return make_succ_response({'total': len(records), 'records': records})
