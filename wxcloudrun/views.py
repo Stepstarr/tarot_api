@@ -6,10 +6,10 @@ from datetime import datetime
 from flask import render_template, request
 from run import app
 from wxcloudrun import db
-from wxcloudrun.dao import delete_counterbyid, query_counterbyid, insert_counter, update_counterbyid, \
-    insert_tarot_reading, query_readings_by_openid, update_tarot_reading, query_tarot_reading_by_id, \
-    soft_delete_reading, soft_delete_all_readings
-from wxcloudrun.model import Counters, TarotReading
+from wxcloudrun.dao import insert_tarot_reading, query_readings_by_openid, update_tarot_reading, \
+    query_tarot_reading_by_id, soft_delete_reading, soft_delete_all_readings, \
+    get_or_create_user, update_user, query_user_by_openid
+from wxcloudrun.model import TarotReading
 from wxcloudrun.response import make_succ_empty_response, make_succ_response, make_err_response, \
     make_tarot_succ_response, make_tarot_err_response
 from wxcloudrun.deepseek import call_deepseek
@@ -25,68 +25,14 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/api/count', methods=['POST'])
-def count():
-    """
-    :return:计数结果/清除结果
-    """
-
-    # 获取请求体参数
-    params = request.get_json()
-
-    # 检查action参数
-    if 'action' not in params:
-        return make_err_response('缺少action参数')
-
-    # 按照不同的action的值，进行不同的操作
-    action = params['action']
-
-    # 执行自增操作
-    if action == 'inc':
-        counter = query_counterbyid(1)
-        if counter is None:
-            counter = Counters()
-            counter.id = 1
-            counter.count = 1
-            counter.created_at = datetime.now()
-            counter.updated_at = datetime.now()
-            insert_counter(counter)
-        else:
-            counter.id = 1
-            counter.count += 1
-            counter.updated_at = datetime.now()
-            update_counterbyid(counter)
-        return make_succ_response(counter.count)
-
-    # 执行清0操作
-    elif action == 'clear':
-        delete_counterbyid(1)
-        return make_succ_empty_response()
-
-    # action参数错误
-    else:
-        return make_err_response('action参数错误')
-
-
-@app.route('/api/count', methods=['GET'])
-def get_count():
-    """
-    :return: 计数的值
-    """
-    counter = Counters.query.filter(Counters.id == 1).first()
-    return make_succ_response(0) if counter is None else make_succ_response(counter.count)
-
-
 def _process_tarot_reading(app_context, reading_id, question, cards, spread):
     """
     后台线程：调用 DeepSeek 解读并将结果存入数据库
     """
     with app_context:
         try:
-            # 更新状态为处理中
             update_tarot_reading(reading_id, 'processing')
 
-            # 调用 DeepSeek
             success, msg, result = call_deepseek(question, cards, spread)
 
             if success:
@@ -121,12 +67,10 @@ def tarot_reading():
     }
     然后前端用 reading_id 轮询 /api/tarot/result?id=123 获取结果
     """
-    # 获取用户openid
     openid = request.headers.get('X-WX-OPENID', '')
     if not openid:
         return make_tarot_err_response('无法获取用户身份信息，请通过微信小程序调用')
 
-    # 解析请求参数
     params = request.get_json()
     if not params:
         return make_tarot_err_response('请求参数不能为空')
@@ -135,7 +79,6 @@ def tarot_reading():
     cards = params.get('cards', {})
     spread = params.get('spread', '').strip()
 
-    # 参数校验
     if not question:
         return make_tarot_err_response('缺少问题(question)参数')
     if not cards or not isinstance(cards, dict) or len(cards) == 0:
@@ -143,7 +86,9 @@ def tarot_reading():
     if not spread:
         return make_tarot_err_response('缺少牌阵(spread)参数')
 
-    # 先创建一条 pending 状态的记录
+    # 自动注册/更新用户活跃时间
+    get_or_create_user(openid)
+
     reading = TarotReading()
     reading.openid = openid
     reading.question = question
@@ -156,7 +101,6 @@ def tarot_reading():
     if not reading_id:
         return make_tarot_err_response('创建解读任务失败')
 
-    # 启动后台线程处理 DeepSeek 调用
     thread = threading.Thread(
         target=_process_tarot_reading,
         args=(app.app_context(), reading_id, question, cards, spread)
@@ -164,7 +108,6 @@ def tarot_reading():
     thread.daemon = True
     thread.start()
 
-    # 立即返回任务ID，前端用这个ID轮询结果
     data = json.dumps({
         'code': 0,
         'msg': '已提交解读，请稍候查询结果',
@@ -179,13 +122,6 @@ def tarot_result():
     """
     查询塔罗牌解读结果（轮询接口）
     请求参数: ?id=123
-    响应:
-    {
-        "code": 0,
-        "status": "completed",  // pending / processing / completed / failed
-        "msg": "解读成功",
-        "result": "解读内容..."
-    }
     """
     reading_id = request.args.get('id', type=int)
     if not reading_id:
@@ -195,7 +131,6 @@ def tarot_result():
     if not reading:
         return make_tarot_err_response('解读记录不存在')
 
-    # 验证用户身份（只能查自己的记录）
     openid = request.headers.get('X-WX-OPENID', '')
     if openid and reading.openid != openid:
         return make_tarot_err_response('无权查看此记录')
@@ -215,7 +150,6 @@ def tarot_result():
             'result': ''
         }, ensure_ascii=False)
     else:
-        # pending 或 processing
         data = json.dumps({
             'code': 0,
             'status': reading.status,
@@ -230,7 +164,7 @@ def tarot_result():
 @app.route('/api/tarot/history', methods=['GET'])
 def tarot_history():
     """
-    获取用户的塔罗牌解读历史记录（只返回已完成的）
+    获取用户的塔罗牌解读历史记录（只返回未被软删除的）
     请求参数(query string):
         page: 页码，默认1
         page_size: 每页条数，默认10
@@ -307,6 +241,58 @@ def tarot_history_delete_all():
         return make_tarot_err_response(msg)
 
 
+# ============ 用户相关接口 ============
+
+@app.route('/api/user/info', methods=['GET'])
+def user_info():
+    """
+    获取用户信息
+    """
+    openid = request.headers.get('X-WX-OPENID', '')
+    if not openid:
+        return make_tarot_err_response('无法获取用户身份信息')
+
+    user = get_or_create_user(openid)
+    if not user:
+        return make_tarot_err_response('获取用户信息失败')
+
+    return make_succ_response({
+        'openid': user.openid,
+        'nickname': user.nickname or '',
+        'avatar_url': user.avatar_url or '',
+        'created_at': user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else ''
+    })
+
+
+@app.route('/api/user/update', methods=['POST'])
+def user_update():
+    """
+    更新用户信息
+    请求体: { "nickname": "昵称", "avatar_url": "头像URL" }
+    """
+    openid = request.headers.get('X-WX-OPENID', '')
+    if not openid:
+        return make_tarot_err_response('无法获取用户身份信息')
+
+    params = request.get_json()
+    if not params:
+        return make_tarot_err_response('请求参数不能为空')
+
+    # 先确保用户存在
+    get_or_create_user(openid)
+
+    nickname = params.get('nickname')
+    avatar_url = params.get('avatar_url')
+
+    success, msg = update_user(openid, nickname=nickname, avatar_url=avatar_url)
+    if success:
+        return make_succ_response({'msg': msg})
+    else:
+        return make_tarot_err_response(msg)
+
+
+# ============ 管理/调试接口 ============
+
 @app.route('/api/admin/readings', methods=['GET'])
 def admin_readings():
     """
@@ -342,7 +328,6 @@ def db_test():
         'mysql_username': config.username,
         'password_set': bool(config.password),
     }
-    # 测试连接
     try:
         result = db.session.execute('SELECT 1').fetchone()
         info['db_connection'] = '成功'
@@ -351,7 +336,6 @@ def db_test():
         info['db_error'] = str(e)
         return make_succ_response(info)
 
-    # 测试写入tarot_readings
     try:
         reading = TarotReading()
         reading.openid = 'test_dbtest'
@@ -367,7 +351,6 @@ def db_test():
         info['db_write'] = '失败'
         info['db_write_error'] = str(e)
 
-    # 查询记录数
     try:
         count = TarotReading.query.count()
         info['total_readings'] = count

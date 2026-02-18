@@ -3,65 +3,65 @@ import logging
 from sqlalchemy.exc import OperationalError
 
 from wxcloudrun import db
-from wxcloudrun.model import Counters, TarotReading
+from wxcloudrun.model import User, TarotReading
 
 # 初始化日志
 logger = logging.getLogger('log')
 
 
-def query_counterbyid(id):
+# ============ 用户相关操作 ============
+
+def get_or_create_user(openid, nickname=None, avatar_url=None):
     """
-    根据ID查询Counter实体
-    :param id: Counter的ID
-    :return: Counter实体
+    根据 openid 获取用户，不存在则自动创建
+    :return: User 实体
     """
     try:
-        return Counters.query.filter(Counters.id == id).first()
-    except OperationalError as e:
-        logger.info("query_counterbyid errorMsg= {} ".format(e))
+        user = User.query.filter_by(openid=openid).first()
+        if user is None:
+            user = User()
+            user.openid = openid
+            user.nickname = nickname
+            user.avatar_url = avatar_url
+            db.session.add(user)
+            db.session.commit()
+        return user
+    except Exception as e:
+        db.session.rollback()
+        logger.error("get_or_create_user errorMsg= {} ".format(e))
         return None
 
 
-def delete_counterbyid(id):
+def update_user(openid, nickname=None, avatar_url=None):
     """
-    根据ID删除Counter实体
-    :param id: Counter的ID
-    """
-    try:
-        counter = Counters.query.get(id)
-        if counter is None:
-            return
-        db.session.delete(counter)
-        db.session.commit()
-    except OperationalError as e:
-        logger.info("delete_counterbyid errorMsg= {} ".format(e))
-
-
-def insert_counter(counter):
-    """
-    插入一个Counter实体
-    :param counter: Counters实体
+    更新用户信息
+    :return: (success, msg)
     """
     try:
-        db.session.add(counter)
+        user = User.query.filter_by(openid=openid).first()
+        if user is None:
+            return False, '用户不存在'
+        if nickname is not None:
+            user.nickname = nickname
+        if avatar_url is not None:
+            user.avatar_url = avatar_url
         db.session.commit()
-    except OperationalError as e:
-        logger.info("insert_counter errorMsg= {} ".format(e))
+        return True, '更新成功'
+    except Exception as e:
+        db.session.rollback()
+        logger.error("update_user errorMsg= {} ".format(e))
+        return False, '更新失败'
 
 
-def update_counterbyid(counter):
+def query_user_by_openid(openid):
     """
-    根据ID更新counter的值
-    :param counter实体
+    根据 openid 查询用户
     """
     try:
-        counter = query_counterbyid(counter.id)
-        if counter is None:
-            return
-        db.session.flush()
-        db.session.commit()
-    except OperationalError as e:
-        logger.info("update_counterbyid errorMsg= {} ".format(e))
+        return User.query.filter_by(openid=openid).first()
+    except Exception as e:
+        logger.error("query_user_by_openid errorMsg= {} ".format(e))
+        return None
 
 
 # ============ 塔罗牌解读记录相关操作 ============
