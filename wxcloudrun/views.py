@@ -226,64 +226,6 @@ def tarot_history_delete_all():
         return make_tarot_err_response(msg)
 
 
-# ============ 分享图片接口 ============
-
-@app.route('/api/tarot/share_image', methods=['POST'])
-def share_image():
-    """
-    生成分享图片
-    请求体: { "reading_id": 123, "hide_question": false }
-    响应: { "code": 0, "data": { "image_base64": "data:image/png;base64,..." } }
-    """
-    openid = request.headers.get('X-WX-OPENID', '')
-    if not openid:
-        return make_tarot_err_response('无法获取用户身份信息')
-
-    params = request.get_json()
-    if not params:
-        return make_tarot_err_response('请求参数不能为空')
-
-    reading_id = params.get('reading_id')
-    if not reading_id:
-        return make_tarot_err_response('缺少 reading_id 参数')
-
-    hide_question = params.get('hide_question', False)
-
-    reading = query_tarot_reading_by_id(reading_id)
-    if not reading:
-        return make_tarot_err_response('解读记录不存在')
-    if reading.openid != openid:
-        return make_tarot_err_response('无权操作此记录')
-    if reading.status != 'completed':
-        return make_tarot_err_response('解读尚未完成，无法生成分享图')
-
-    result_obj = safe_parse_result(reading.result)
-    golden_quote = result_obj.get('金句', '')
-    if not golden_quote:
-        golden_quote = '愿星辰指引你前行的方向。'
-
-    try:
-        cards = json.loads(reading.cards)
-    except (json.JSONDecodeError, TypeError):
-        cards = {}
-
-    try:
-        from wxcloudrun.share_image import generate_share_image
-        image_b64 = generate_share_image(
-            question=reading.question,
-            cards=cards,
-            spread=reading.spread,
-            golden_quote=golden_quote,
-            hide_question=hide_question
-        )
-        return make_succ_response({
-            'image_base64': f'data:image/png;base64,{image_b64}'
-        })
-    except Exception as e:
-        logger.error("生成分享图片失败: {}".format(str(e)))
-        return make_tarot_err_response('生成分享图片失败: {}'.format(str(e)))
-
-
 # ============ 用户相关接口 ============
 
 @app.route('/api/user/info', methods=['GET'])
