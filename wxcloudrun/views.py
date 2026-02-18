@@ -1,9 +1,13 @@
 import json
 import logging
+import re
 import threading
 from datetime import datetime
 
+import requests
 from flask import render_template, request, Response
+
+import config
 from run import app
 from wxcloudrun import db
 from wxcloudrun.dao import insert_tarot_reading, query_readings_by_openid, update_tarot_reading, \
@@ -225,6 +229,41 @@ def tarot_history_delete_all():
         return make_succ_response({'msg': msg, 'deleted_count': count})
     else:
         return make_tarot_err_response(msg)
+
+
+@app.route('/api/tarot/image', methods=['GET'])
+def tarot_image():
+    """
+    根据名称获取塔罗牌图片 URL
+    请求参数: name - 图片名称（如 10命运之轮、the_fool，可带或不带扩展名）
+    若名称对应的图片不存在，则返回默认图片（10命运之轮.png）
+    """
+    name = request.args.get('name', '').strip()
+    if not name:
+        return make_tarot_err_response('缺少图片名称参数 name')
+
+    # 防止路径遍历，只允许字母数字、中文、下划线、横线、点
+    if not re.match(r'^[\w\u4e00-\u9fff\-\.]+$', name):
+        return make_tarot_err_response('图片名称格式不合法')
+
+    # 若无扩展名则补 .png
+    if '.' not in name:
+        name = name + '.png'
+
+    base_url = config.STORAGE_BASE_URL.rstrip('/')
+    image_url = f"{base_url}/{name}"
+    default_url = f"{base_url}/{config.STORAGE_DEFAULT_IMAGE}"
+
+    try:
+        resp = requests.head(image_url, timeout=3)
+        if resp.status_code == 200:
+            url = image_url
+        else:
+            url = default_url
+    except Exception:
+        url = default_url
+
+    return make_succ_response({'url': url})
 
 
 # ============ 用户相关接口 ============

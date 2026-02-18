@@ -20,7 +20,8 @@ POST /api/tarot
 {
     "question": "我今年的学业发展如何啊？",
     "cards": {"愚者": "正", "女祭司": "负", "命运之轮": "正"},
-    "spread": "时间之流三牌阵"
+    "spread": "时间之流三牌阵",
+    "positions": ["过去", "现在", "未来"]
 }
 ```
 
@@ -29,8 +30,11 @@ POST /api/tarot
 | question | string | 是 | 用户的提问 |
 | cards | object | 是 | 抽到的牌，key 为牌名，value 为 `"正"` 或 `"负"` |
 | spread | string | 是 | 牌阵名称 |
+| positions | array | 否 | 牌位含义列表，顺序与 cards 一一对应，如 `["过去", "现在", "未来"]` |
 
 > **0218 修改**：cards 从数组格式 `["愚者", "女祭司"]` 改为字典格式 `{"愚者": "正", "女祭司": "负"}`，携带正负位信息
+>
+> **0219 修改**：新增 `positions` 参数，传入各牌位的含义，大模型会结合牌位语境进行解读
 
 **响应**（立即返回，后台异步解读）
 
@@ -70,9 +74,23 @@ GET /api/tarot/result?id={reading_id}
     "code": 0,
     "status": "completed",
     "msg": "解读成功",
-    "result": "解读内容..."
+    "result": {
+        "reading_content": "牌面解读内容（含引子、牌阵说明、逐张解读）",
+        "综合分析": "用情绪逻辑总结所有牌的关系，围绕用户问题分析",
+        "金句": "一句温暖而有力量的话",
+        "建议": "3条具体建议，每条带行动提示"
+    }
 }
 ```
+
+> **result 字段说明**：`result` 为 JSON 对象，包含 4 个字段，前端可分模块展示
+
+| result 子字段 | 类型 | 说明 |
+|--------------|------|------|
+| reading_content | string | 牌面逐张解读 |
+| 综合分析 | string | 所有牌的关系总结 |
+| 金句 | string | 一句总结性金句 |
+| 建议 | string | 3 条行动建议 |
 
 解读中：
 ```json
@@ -80,7 +98,7 @@ GET /api/tarot/result?id={reading_id}
     "code": 0,
     "status": "processing",
     "msg": "正在解读中，请稍候...",
-    "result": ""
+    "result": {}
 }
 ```
 
@@ -90,7 +108,7 @@ GET /api/tarot/result?id={reading_id}
     "code": 1,
     "status": "failed",
     "msg": "失败原因",
-    "result": ""
+    "result": {}
 }
 ```
 
@@ -126,12 +144,14 @@ GET /api/tarot/result?id={reading_id}
 注意：避免术语堆砌，如"潜意识"、"能量场"等可用"内心声音"、"情绪流动"替代。不要使用任何emoji表情符号，用纯文字表达
 ```
 
-**User Message 模板（0218 修改）**
+**User Message 模板（0219 修改）**
 
 ```
 我的问题是：{question}
 
 使用的牌阵：{spread}
+
+各牌位含义（按顺序）：过去、现在、未来
 
 抽到的牌（按牌位顺序）：愚者牌正位、女祭司牌负位、命运之轮牌正位
 
@@ -139,6 +159,43 @@ GET /api/tarot/result?id={reading_id}
 ```
 
 > **0218 修改**：牌面描述改为 "xx牌x位" 格式，如 "愚者牌正位"
+>
+> **0219 修改**：当传入 positions 时，新增"各牌位含义"行，牌位含义与牌面按顺序一一对应
+<<<<<<< Current (Your changes)
+=======
+
+---
+
+### 1.4 获取塔罗牌图片
+
+**请求**
+
+```
+GET /api/tarot/image?name={图片名称}
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 图片名称，如 `10命运之轮`、`the_fool`，可带或不带扩展名 |
+
+**响应**
+
+```json
+{
+    "code": 0,
+    "data": {
+        "url": "https://xxx.tcb.qcloud.la/10命运之轮.png"
+    }
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| url | 图片访问地址，前端直接用于 `<image src="url">` 或 `wx.previewImage` |
+| 若名称对应图片不存在 | 返回默认图片（10命运之轮.png）的 URL |
+
+> 图片存储在云托管对象存储中，无需 X-WX-OPENID
+>>>>>>> Incoming (Background Agent changes)
 
 ---
 
@@ -170,7 +227,12 @@ GET /api/tarot/history?page=1&page_size=10
                 "cards": {"愚者": "正", "女祭司": "负", "命运之轮": "正"},
                 "spread": "时间之流三牌阵",
                 "status": "completed",
-                "result": "大模型解读的完整内容...",
+                "result": {
+                    "reading_content": "牌面解读内容...",
+                    "综合分析": "综合分析内容...",
+                    "金句": "一句金句...",
+                    "建议": "3条建议..."
+                },
                 "created_at": "2026-02-18 14:30:00"
             }
         ],
@@ -189,7 +251,7 @@ GET /api/tarot/history?page=1&page_size=10
 | list[].cards | 牌面及正负位 |
 | list[].spread | 牌阵名称 |
 | list[].status | 状态 |
-| list[].result | 解读结果（仅 completed 有内容） |
+| list[].result | 解读结果对象（仅 completed 有内容，结构同 1.2 的 result） |
 | list[].created_at | 创建时间 |
 | total | 总记录数 |
 | page | 当前页码 |
@@ -399,3 +461,4 @@ POST /api/user/update
 |------|------|
 | 0214 | 初版上线：占卜解读、历史记录、异步模式 |
 | 0218 | cards 改为字典格式支持正负位；新增软删除接口；新增 User 用户表；删除 Counters 表 |
+| 0219 | 解读结果改为结构化 JSON；新增 positions 牌位含义参数；新增分享图片接口 |
