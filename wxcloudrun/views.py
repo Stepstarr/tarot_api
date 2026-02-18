@@ -25,7 +25,7 @@ def index():
     return render_template('index.html')
 
 
-def _process_tarot_reading(app_context, reading_id, question, cards, spread):
+def _process_tarot_reading(app_context, reading_id, question, cards, spread, positions=None):
     """
     后台线程：调用 DeepSeek 解读并将结果存入数据库
     """
@@ -33,7 +33,7 @@ def _process_tarot_reading(app_context, reading_id, question, cards, spread):
         try:
             update_tarot_reading(reading_id, 'processing')
 
-            success, msg, result = call_deepseek(question, cards, spread)
+            success, msg, result = call_deepseek(question, cards, spread, positions)
 
             if success:
                 update_tarot_reading(reading_id, 'completed', result)
@@ -65,6 +65,7 @@ def tarot_reading():
     question = params.get('question', '').strip()
     cards = params.get('cards', {})
     spread = params.get('spread', '').strip()
+    positions = params.get('positions', [])
 
     if not question:
         return make_tarot_err_response('缺少问题(question)参数')
@@ -89,7 +90,7 @@ def tarot_reading():
 
     thread = threading.Thread(
         target=_process_tarot_reading,
-        args=(app.app_context(), reading_id, question, cards, spread)
+        args=(app.app_context(), reading_id, question, cards, spread, positions)
     )
     thread.daemon = True
     thread.start()

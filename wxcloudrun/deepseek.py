@@ -27,7 +27,7 @@ SYSTEM_PROMPT = """你是一位富有同理心的塔罗占卜师，请根据用�
    - 多张牌之间用换行分隔
 
 2. 综合分析：
-   - 用"情绪逻辑"总结所有牌的关系
+   - 总结所有牌的关系
    - 严格围绕用户的问题进行分析，直接回答用户的疑问
 
 3. 金句：
@@ -101,12 +101,13 @@ def safe_parse_result(result_str):
     return {"reading_content": result_str, "综合分析": "", "金句": "", "建议": ""}
 
 
-def call_deepseek(question, cards, spread):
+def call_deepseek(question, cards, spread, positions=None):
     """
     调用 DeepSeek API 进行塔罗牌解读
     :param question: 用户的问题
     :param cards: 抽到的牌字典，格式 {"牌名": "正/负"}
     :param spread: 牌阵名称
+    :param positions: 牌位含义列表，如 ["过去", "现在", "未来"]
     :return: (success, message, result_json_str)
              success: bool, 是否成功
              message: str, 提示信息
@@ -116,9 +117,14 @@ def call_deepseek(question, cards, spread):
         return False, "DeepSeek API Key 未配置", ""
 
     cards_str = "、".join(f"{name}牌{pos}位" for name, pos in cards.items())
+
+    positions_str = ""
+    if positions and len(positions) == len(cards):
+        positions_str = f"\n\n各牌位含义（按顺序）：{'、'.join(positions)}"
+
     user_message = f"""我的问题是：{question}
 
-使用的牌阵：{spread}
+使用的牌阵：{spread}{positions_str}
 
 抽到的牌（按牌位顺序）：{cards_str}
 
