@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime
 
 import requests
 from flask import render_template, request, Response
@@ -13,7 +12,7 @@ from wxcloudrun import db
 from wxcloudrun.dao import insert_tarot_reading, query_readings_by_openid, update_tarot_reading, \
     query_tarot_reading_by_id, soft_delete_reading, soft_delete_all_readings, \
     get_or_create_user, update_user, query_user_by_openid
-from wxcloudrun.model import TarotReading
+from wxcloudrun.model import TarotReading, china_now
 from wxcloudrun.response import make_succ_empty_response, make_succ_response, make_err_response, \
     make_tarot_succ_response, make_tarot_err_response
 from wxcloudrun.deepseek import call_deepseek, safe_parse_result
@@ -86,7 +85,7 @@ def tarot_reading():
     reading.cards = json.dumps(cards, ensure_ascii=False)
     reading.spread = spread
     reading.status = 'pending'
-    reading.created_at = datetime.now()
+    reading.created_at = china_now()
 
     reading_id = insert_tarot_reading(reading)
     if not reading_id:
@@ -368,7 +367,7 @@ def db_test():
         reading.spread = '测试牌阵'
         reading.status = 'completed'
         reading.result = '这是一段测试解读内容，包含中文。'
-        reading.created_at = datetime.now()
+        reading.created_at = china_now()
         insert_tarot_reading(reading)
         info['db_write'] = '成功'
     except Exception as e:

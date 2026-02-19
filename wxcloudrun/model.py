@@ -1,6 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from wxcloudrun import db
+
+# 中国时区 UTC+8，用于存储数据库时间
+CHINA_TZ = timezone(timedelta(hours=8))
+
+
+def china_now():
+    """返回当前北京时间（不含时区信息的 naive datetime，便于 MySQL 存储）"""
+    return datetime.now(CHINA_TZ).replace(tzinfo=None)
 
 
 # 用户表
@@ -12,8 +20,8 @@ class User(db.Model):
     openid = db.Column(db.String(128), nullable=False, unique=True, index=True, comment='用户微信openid')
     nickname = db.Column(db.String(64), nullable=True, comment='用户昵称')
     avatar_url = db.Column(db.String(500), nullable=True, comment='用户头像URL')
-    created_at = db.Column(db.TIMESTAMP, nullable=False, default=datetime.now, comment='首次使用时间')
-    updated_at = db.Column(db.TIMESTAMP, nullable=False, default=datetime.now, onupdate=datetime.now, comment='最后活跃时间')
+    created_at = db.Column(db.TIMESTAMP, nullable=False, default=china_now, comment='首次使用时间')
+    updated_at = db.Column(db.TIMESTAMP, nullable=False, default=china_now, onupdate=china_now, comment='最后活跃时间')
 
 
 # 塔罗牌解读记录表
@@ -30,4 +38,4 @@ class TarotReading(db.Model):
     status = db.Column(db.String(20), nullable=False, default='pending', comment='任务状态')
     result = db.Column(db.Text, nullable=True, comment='大模型解读结果')
     is_deleted = db.Column(db.Boolean, nullable=False, default=False, server_default='0', comment='是否已删除（软删除）')
-    created_at = db.Column(db.TIMESTAMP, nullable=False, default=datetime.now, comment='创建时间')
+    created_at = db.Column(db.TIMESTAMP, nullable=False, default=china_now, comment='创建时间')
